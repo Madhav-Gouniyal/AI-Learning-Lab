@@ -42,11 +42,14 @@ def get_conversation_history(sender):
     return messages
 
 def save_message(sender, role, content):
-    supabase.table("conversations").insert({
-        "sender": sender,
-        "role": role,
-        "content": content
-    }).execute()
+    try:
+        supabase.table("conversations").insert({
+            "sender": sender,
+            "role": role,
+            "content": content
+        }).execute()
+    except Exception as e:
+        print(f"Save message error: {e}")
 
 @app.route('/')
 def home():
