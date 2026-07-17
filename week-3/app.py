@@ -1,16 +1,17 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from groq import Groq
-import numpy as np
+from supabase import create_client
 import os
 
 app = Flask(__name__)
 CORS(app)
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
-client = Groq(api_key=os.environ.get("your-groq-key-here"))
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_SECRET_KEY")
+supabase = create_client(supabase_url, supabase_key)
 
 knowledge_base = [
     "Our UPSC course costs 45000 rupees for the full program",
@@ -23,6 +24,30 @@ knowledge_base = [
     "Online batches are available for outstation students"
 ]
 
+def score_lead(message):
+    hot_words = ["join", "admission", "enroll", "fees", "budget", "start", "when", "book"]
+    warm_words = ["interested", "tell me", "how", "course", "batch", "timing"]
+    msg = message.lower()
+    if any(w in msg for w in hot_words):
+        return 0.8
+    elif any(w in msg for w in warm_words):
+        return 0.5
+    return 0.2
+
+def get_conversation_history(sender):
+    result = supabase.table("conversations").select("*").eq("sender", sender).order("created_at").execute()
+    messages = []
+    for row in result.data:
+        messages.append({"role": row["role"], "content": row["content"]})
+    return messages
+
+def save_message(sender, role, content):
+    supabase.table("conversations").insert({
+        "sender": sender,
+        "role": role,
+        "content": content
+    }).execute()
+
 @app.route('/')
 def home():
     return jsonify({"status": "StudyPeak AI Agent is running"})
@@ -30,13 +55,13 @@ def home():
 @app.route('/ask', methods=['POST'])
 def ask():
     data = request.json
-    query = data.get('question', '')
+    query = data.get('question', '').lower()
 
-    query_embedding = model.encode([query])
-    kb_embeddings = model.encode(knowledge_base)
-    similarities = cosine_similarity(query_embedding, kb_embeddings)[0]
-    top_indices = np.argsort(similarities)[::-1][:3]
-    context = "\n".join([knowledge_base[idx] for idx in top_indices])
+    relevant = [chunk for chunk in knowledge_base
+                if any(word in chunk.lower() for word in query.split())]
+    if not relevant:
+        relevant = knowledge_base[:3]
+    context = "\n".join(relevant[:3])
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -54,15 +79,36 @@ def webhook():
     message = data.get('message', '')
     sender = data.get('sender', 'Student')
 
+    history = get_conversation_history(sender)
+
+    messages = [
+        {"role": "system", "content": f"You are a WhatsApp assistant for StudyPeak UPSC coaching. Student name: {sender}. Remember what they've told you before. Qualify their interest naturally."}
+    ]
+    messages.extend(history)
+    messages.append({"role": "user", "content": message})
+
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": f"You are a WhatsApp assistant for StudyPeak UPSC coaching. The student's name is {sender}. Qualify their interest naturally in under 3 sentences."},
-            {"role": "user", "content": message}
-        ]
+        messages=messages
     )
     reply = response.choices[0].message.content
-    return jsonify({"reply": reply, "sender": sender})
+
+    lead_score = score_lead(message)
+
+    save_message(sender, "user", message)
+    save_message(sender, "assistant", reply)
+
+    try:
+        supabase.table("leads").insert({
+            "sender": sender,
+            "message": message,
+            "reply": reply,
+            "lead_score": lead_score
+        }).execute()
+    except Exception as e:
+        print(f"Supabase error: {e}")
+
+    return jsonify({"reply": reply, "sender": sender, "lead_score": lead_score})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
