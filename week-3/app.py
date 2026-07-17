@@ -35,9 +35,9 @@ def score_lead(message):
     return 0.2
 
 def get_conversation_history(sender):
-    result = supabase.table("conversations").select("*").eq("sender", sender).order("created_at").execute()
+    result = supabase.table("conversations").select("*").eq("sender", sender).order("created_at", desc=True).limit(10).execute()
     messages = []
-    for row in result.data:
+    for row in reversed(result.data):
         messages.append({"role": row["role"], "content": row["content"]})
     return messages
 
