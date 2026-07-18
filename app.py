@@ -34,6 +34,28 @@ def score_lead(message):
         return 0.5
     return 0.2
 
+def get_conversation_history(sender):
+    try:
+        result = supabase.table("conversations").select("*").eq("sender", sender).order("created_at", desc=True).limit(10).execute()
+        messages = []
+        for row in reversed(result.data):
+            messages.append({"role": row["role"], "content": row["content"]})
+        return messages
+    except Exception as e:
+        print(f"GET HISTORY ERROR: {e}")
+        return []
+
+def save_message(sender, role, content):
+    try:
+        supabase.table("conversations").insert({
+            "sender": sender,
+            "role": role,
+            "content": content
+        }).execute()
+        print(f"SAVED: {role}")
+    except Exception as e:
+        print(f"SAVE MESSAGE ERROR: {e}")
+
 @app.route('/')
 def home():
     return jsonify({"status": "StudyPeak AI Agent is running"})
@@ -52,42 +74,4 @@ def ask():
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant for StudyPeak UPSC coaching institute. Answer using ONLY the provided context. Be concise and friendly."},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
-        ]
-    )
-    answer = response.choices[0].message.content
-    return jsonify({"answer": answer, "query": query})
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.json
-    message = data.get('message', '')
-    sender = data.get('sender', 'Student')
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": f"You are a WhatsApp assistant for StudyPeak UPSC coaching. Student name: {sender}. Qualify their interest in under 3 sentences."},
-            {"role": "user", "content": message}
-        ]
-    )
-    reply = response.choices[0].message.content
-
-    lead_score = score_lead(message)
-
-    try:
-        supabase.table("leads").insert({
-            "sender": sender,
-            "message": message,
-            "reply": reply,
-            "lead_score": lead_score
-        }).execute()
-    except Exception as e:
-        print(f"Supabase error: {e}")
-
-    return jsonify({"reply": reply, "sender": sender, "lead_score": lead_score})
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+            {"role": "system", "content": "You are a helpful assistant for StudyPeak UPSC coaching institute. Answer using ONLY the
