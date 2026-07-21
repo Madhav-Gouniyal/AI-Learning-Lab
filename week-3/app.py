@@ -7,71 +7,67 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+client = Groq(api_key=os.environ.get('GROQ_API_KEY'))
+supabase = create_client(os.environ.get('SUPABASE_URL'), os.environ.get('SUPABASE_SECRET_KEY'))
 
-supabase_url = os.environ.get("SUPABASE_URL")
-supabase_key = os.environ.get("SUPABASE_SECRET_KEY")
-supabase = create_client(supabase_url, supabase_key)
-
-knowledge_base = [
-    "Our UPSC course costs 45000 rupees for the full program",
-    "Classes are held Monday to Friday from 7am to 9am",
-    "We offer EMI options in 3, 6, and 12 month installments",
-    "The course duration is 12 months with 400 hours of content",
-    "Our success rate is 34% for prelims in the 2023 batch",
-    "You can contact us at 9876543210 or visit us in Laxmi Nagar",
-    "We provide free study material and test series with enrollment",
-    "Online batches are available for outstation students"
+kb = [
+    'Our UPSC course costs 45000 rupees for the full program',
+    'Classes are held Monday to Friday from 7am to 9am',
+    'We offer EMI options in 3, 6, and 12 month installments',
+    'The course duration is 12 months with 400 hours of content',
+    'Our success rate is 34 percent for prelims in the 2023 batch',
+    'You can contact us at 9876543210 or visit us in Laxmi Nagar',
+    'We provide free study material and test series with enrollment',
+    'Online batches are available for outstation students'
 ]
 
 def score_lead(message):
-    hot_words = ["join", "admission", "enroll", "fees", "budget", "start", "when", "book"]
-    warm_words = ["interested", "tell me", "how", "course", "batch", "timing"]
-    msg = message.lower()
-    if any(w in msg for w in hot_words):
-        return 0.8
-    elif any(w in msg for w in warm_words):
-        return 0.5
+    hot = ['join','admission','enroll','fees','budget','start','when','book']
+    warm = ['interested','tell me','how','course','batch','timing']
+    m = message.lower()
+    if any(w in m for w in hot): return 0.8
+    if any(w in m for w in warm): return 0.5
     return 0.2
 
-def get_conversation_history(sender):
+def get_history(sender):
     try:
-        result = supabase.table("conversations").select("*").eq("sender", sender).order("created_at", desc=True).limit(10).execute()
-        messages = []
-        for row in reversed(result.data):
-            messages.append({"role": row["role"], "content": row["content"]})
-        return messages
+        r = supabase.table('conversations').select('*').eq('sender', sender).order('created_at', desc=True).limit(10).execute()
+        return [{'role': x['role'], 'content': x['content']} for x in reversed(r.data)]
     except Exception as e:
-        print(f"GET HISTORY ERROR: {e}")
+        print('GET HISTORY ERROR:', e)
         return []
 
 def save_message(sender, role, content):
     try:
-        supabase.table("conversations").insert({
-            "sender": sender,
-            "role": role,
-            "content": content
-        }).execute()
-        print(f"SAVED: {role}")
+        supabase.table('conversations').insert({'sender': sender, 'role': role, 'content': content}).execute()
+        print('SAVED:', role)
     except Exception as e:
-        print(f"SAVE MESSAGE ERROR: {e}")
+        print('SAVE MESSAGE ERROR:', e)
 
 @app.route('/')
 def home():
-    return jsonify({"status": "StudyPeak AI Agent is running"})
+    return jsonify({'status': 'StudyPeak AI Agent is running'})
 
-@app.route('/ask', methods=['POST'])
-def ask():
+@app.route('/webhook', methods=['POST'])
+def webhook():
     data = request.json
-    query = data.get('question', '').lower()
+    message = data.get('message', '')
+    sender = data.get('sender', 'Student')
+    print('WEBHOOK HIT:', sender, message)
+    history = get_history(sender)
+    print('HISTORY COUNT:', len(history))
+    msgs = [{'role': 'system', 'content': 'You are a WhatsApp assistant for StudyPeak UPSC coaching. Remember what the student told you before. Qualify their interest naturally in under 3 sentences.'}]
+    msgs.extend(history)
+    msgs.append({'role': 'user', 'content': message})
+    resp = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=msgs)
+    reply = resp.choices[0].message.content
+    save_message(sender, 'user', message)
+    save_message(sender, 'assistant', reply)
+    try:
+        supabase.table('leads').insert({'sender': sender, 'message': message, 'reply': reply, 'lead_score': score_lead(message)}).execute()
+    except Exception as e:
+        print('LEADS ERROR:', e)
+    return jsonify({'reply': reply, 'sender': sender})
 
-    relevant = [chunk for chunk in knowledge_base
-                if any(word in chunk.lower() for word in query.split())]
-    if not relevant:
-        relevant = knowledge_base[:3]
-    context = "\n".join(relevant[:3])
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant for StudyPeak UPSC coaching institute. Answer using ONLY the
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
