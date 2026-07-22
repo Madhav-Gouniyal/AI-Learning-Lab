@@ -1,4 +1,4 @@
-﻿from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from groq import Groq
 from supabase import create_client
@@ -67,7 +67,7 @@ def webhook():
         supabase.table('leads').insert({'sender': sender, 'message': message, 'reply': reply, 'lead_score': score_lead(message)}).execute()
     except Exception as e:
         print('LEADS ERROR:', e)
-    return jsonify({'reply': reply, 'sender': sender})
+    return jsonify({'reply': reply, 'sender': sender, 'lead_score': score_lead(message)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
