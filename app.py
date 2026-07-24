@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+﻿from flask import Flask, request, jsonify
 from flask_cors import CORS
 from groq import Groq
 from supabase import create_client
@@ -54,6 +54,10 @@ def webhook():
     message = data.get('message', '')
     sender = data.get('sender', 'Student')
     print('WEBHOOK HIT:', sender, message)
+    client id = data.get('client_id', 'default')
+    kb_result = supabase.table('clients').select('knowledge_base').eq('id',client_id).execute()
+    kb = kb_result.data[0]['knowledge_base'] if kb_result.data else kb
+    
     history = get_history(sender)
     print('HISTORY COUNT:', len(history))
     msgs = [{'role': 'system', 'content': 'You are a WhatsApp assistant for StudyPeak UPSC coaching. Remember what the student told you before. Qualify their interest naturally in under 3 sentences.'}]
